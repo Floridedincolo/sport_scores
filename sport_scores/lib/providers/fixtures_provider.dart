@@ -23,7 +23,21 @@ class FixturesProvider extends ChangeNotifier {
   LoadingState get liveState => _liveState;
   LoadingState get dateState => _dateState;
   String? get errorMessage => _errorMessage;
-  List<Fixture> get liveFixtures => _liveFixtures;
+  /// Live fixtures = cele de la endpoint-ul `live=all` (acoperă doar ligile top
+  /// pe planul gratuit) + cele detectate ca live în lista pe dată (acoperă
+  /// ligile rămase, ex. Liga I). Deduplicate după id.
+  List<Fixture> get liveFixtures {
+    final byId = <int, Fixture>{};
+    for (final f in _liveFixtures) {
+      byId[f.id] = f;
+    }
+    for (final f in _dateFixtures) {
+      if (f.status.isLive) {
+        byId.putIfAbsent(f.id, () => f);
+      }
+    }
+    return byId.values.toList();
+  }
   DateTime get selectedDate => _selectedDate;
   League? get selectedLeague => _selectedLeague;
 

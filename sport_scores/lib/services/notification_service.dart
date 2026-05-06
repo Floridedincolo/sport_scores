@@ -86,12 +86,26 @@ class NotificationService {
     required int homeScore,
     required int awayScore,
     required bool scoredByHome,
+    String? scorerName,
+    String? assistName,
+    String? minute,
   }) async {
-    final scorer = scoredByHome ? homeTeam : awayTeam;
+    final team = scoredByHome ? homeTeam : awayTeam;
+    // Title: "⚽ Salah 47'" if we have details, "GOL — Liverpool" otherwise.
+    final String title;
+    if (scorerName != null && scorerName.isNotEmpty) {
+      final min = minute != null ? " $minute" : '';
+      title = '⚽ $scorerName$min ($team)';
+    } else {
+      title = 'GOL — $team';
+    }
+    final assist =
+        (assistName != null && assistName.isNotEmpty) ? '  ·  asist: $assistName' : '';
     await showMatchUpdate(
-      id: _notifId(matchId, _idOffsetGoal),
-      title: 'GOL — $scorer',
-      body: '$homeTeam $homeScore - $awayScore $awayTeam',
+      id: _notifId(matchId, _idOffsetGoal) +
+          DateTime.now().millisecondsSinceEpoch % 1000,
+      title: title,
+      body: '$homeTeam $homeScore - $awayScore $awayTeam$assist',
     );
   }
 

@@ -6,7 +6,7 @@ import 'screens/home/home_screen.dart';
 import 'services/live_monitor_service.dart';
 
 /// Frecvența de polling pentru meciurile favorite cât timp app-ul e în foreground.
-const Duration _foregroundPollInterval = Duration(minutes: 2);
+const Duration _foregroundPollInterval = Duration(minutes: 3);
 
 class SportScoresApp extends StatefulWidget {
   const SportScoresApp({super.key});

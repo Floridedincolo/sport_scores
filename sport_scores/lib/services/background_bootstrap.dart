@@ -56,9 +56,9 @@ void _onStart(ServiceInstance service) async {
   DartPluginRegistrant.ensureInitialized();
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Pornim un ciclu imediat, apoi unul la fiecare 2 minute.
+  // Pornim un ciclu imediat, apoi unul la fiecare 3 minute.
   await _runSingleCheck();
-  Timer.periodic(const Duration(minutes: 2), (_) async {
+  Timer.periodic(const Duration(minutes: 3), (_) async {
     await _runSingleCheck();
   });
 

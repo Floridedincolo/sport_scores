@@ -34,6 +34,10 @@ class MatchEvent {
   final String displayName;
   final bool? scoredByHome;
   final String? incidentDescription;
+  // Goal-only enrichments coming from /fixtures/events (when available).
+  final String? scorerName;
+  final String? assistName;
+  final String? minute;
 
   MatchEvent({
     required this.kind,
@@ -41,6 +45,9 @@ class MatchEvent {
     required this.displayName,
     this.scoredByHome,
     this.incidentDescription,
+    this.scorerName,
+    this.assistName,
+    this.minute,
   });
 }
 
@@ -144,6 +151,9 @@ class LiveMonitorService {
           homeScore: f.score.homeTotal ?? 0,
           awayScore: f.score.awayTotal ?? 0,
           scoredByHome: e.scoredByHome ?? true,
+          scorerName: e.scorerName,
+          assistName: e.assistName,
+          minute: e.minute,
         );
       case MatchEventKind.kickoff:
         await NotificationService.showKickoff(
@@ -287,64 +297,90 @@ class LiveMonitorService {
       }
     }
 
-    // 3) Gol / punct: scorul s-a schimbat (doar dacă aveam snapshot anterior).
+    // 3+4) Gol și incidente — fetch events O SINGURĂ DATĂ pentru fotbal când
+    // scorul/statusul s-a schimbat. Folosim aceleași events pentru:
+    //   - notificare gol detaliată (scorer + asist + minut)
+    //   - notificări cartonașe (galben / roșu)
     final prevHome = prev?.homeScore;
     final prevAway = prev?.awayScore;
-    if (prev != null &&
+    final scoreChanged = prev != null &&
         newHome != null &&
         newAway != null &&
-        (prevHome != newHome || prevAway != newAway)) {
-      if (newHome > (prevHome ?? 0)) {
-        await _emit(MatchEvent(
-          kind: MatchEventKind.goal,
-          fixture: fixture,
-          displayName: fav.displayName,
-          scoredByHome: true,
-        ));
-      }
-      if (newAway > (prevAway ?? 0)) {
-        await _emit(MatchEvent(
-          kind: MatchEventKind.goal,
-          fixture: fixture,
-          displayName: fav.displayName,
-          scoredByHome: false,
-        ));
-      }
-    }
+        (prevHome != newHome || prevAway != newAway);
 
-    // 4) Cartonașe/incidente pentru fotbal: doar dacă s-a schimbat ceva,
-    //    ca să nu facem un request în plus la fiecare ciclu.
     List<String> notifiedEventIds = prev?.notifiedEventIds ?? <String>[];
-    final shouldFetchIncidents = fav.sport == SportType.football &&
+
+    final shouldFetchEvents = fav.sport == SportType.football &&
         _footballEventsFetcher != null &&
         fixture.status.isLive &&
         prev != null &&
-        (prev.statusCode != newStatus ||
-            prev.homeScore != newHome ||
-            prev.awayScore != newAway);
+        (prev.statusCode != newStatus || scoreChanged);
 
-    if (shouldFetchIncidents) {
+    List<FixtureEvent>? events;
+    if (shouldFetchEvents) {
       try {
-        final events = await _footballEventsFetcher(fixture.id);
-        final newCards = events.where((e) => e.isCard).toList();
-        final updated = List<String>.from(notifiedEventIds);
-        for (final ev in newCards) {
-          final id = _eventFingerprint(ev);
-          if (updated.contains(id)) continue;
-          updated.add(id);
-          final who = ev.playerName ?? ev.teamName ?? 'Cartonaș';
-          final colour = ev.detail ?? 'Cartonaș';
-          await _emit(MatchEvent(
-            kind: MatchEventKind.incident,
-            fixture: fixture,
-            displayName: fav.displayName,
-            incidentDescription: '$colour — $who',
-          ));
-        }
-        notifiedEventIds = updated;
+        events = await _footballEventsFetcher(fixture.id);
       } catch (e) {
         debugPrint('[LiveMonitor] Eroare la fetch events: $e');
       }
+    }
+
+    // 3) Notificări goluri.
+    if (scoreChanged) {
+      final goalsByTeam = <bool, List<FixtureEvent>>{};
+      if (events != null) {
+        for (final ev in events.where((e) => e.isGoal)) {
+          final isHome = ev.teamId == fixture.homeTeam.id;
+          goalsByTeam.putIfAbsent(isHome, () => []).add(ev);
+        }
+      }
+
+      Future<void> emitGoal(bool home) async {
+        // Iau cel mai recent gol al echipei din events (dacă există).
+        final teamGoals = goalsByTeam[home] ?? const <FixtureEvent>[];
+        FixtureEvent? latest;
+        if (teamGoals.isNotEmpty) {
+          teamGoals.sort((a, b) => (a.elapsed ?? 0).compareTo(b.elapsed ?? 0));
+          latest = teamGoals.last;
+          // Marchează ca notificat ca să nu apară din nou.
+          final id = _eventFingerprint(latest);
+          if (!notifiedEventIds.contains(id)) {
+            notifiedEventIds = [...notifiedEventIds, id];
+          }
+        }
+        await _emit(MatchEvent(
+          kind: MatchEventKind.goal,
+          fixture: fixture,
+          displayName: fav.displayName,
+          scoredByHome: home,
+          scorerName: latest?.playerName,
+          assistName: latest?.assistName,
+          minute: latest?.timeDisplay,
+        ));
+      }
+
+      if (newHome > (prevHome ?? 0)) await emitGoal(true);
+      if (newAway > (prevAway ?? 0)) await emitGoal(false);
+    }
+
+    // 4) Cartonașe — doar cele neraportate încă.
+    if (events != null) {
+      final updated = List<String>.from(notifiedEventIds);
+      for (final ev in events.where((e) => e.isCard)) {
+        final id = _eventFingerprint(ev);
+        if (updated.contains(id)) continue;
+        updated.add(id);
+        final who = ev.playerName ?? ev.teamName ?? 'Cartonaș';
+        final colour = ev.detail ?? 'Cartonaș';
+        final time = ev.timeDisplay;
+        await _emit(MatchEvent(
+          kind: MatchEventKind.incident,
+          fixture: fixture,
+          displayName: fav.displayName,
+          incidentDescription: '$colour — $who${time.isNotEmpty ? ' ($time)' : ''}',
+        ));
+      }
+      notifiedEventIds = updated;
     }
 
     // 5) Persistă snapshot-ul nou pentru ciclul următor.
